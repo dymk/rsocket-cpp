@@ -5,8 +5,6 @@ dist: trusty
 
 language: cpp
 
-os: linux
-
 addons:
   apt:
     sources: &common_srcs
@@ -36,11 +34,15 @@ addons:
       - zlib1g-dev
 
 matrix:
+  allow_failures:
+    - os: osx
+
   include:
     # Set COMPILER environment variable instead of CC or CXX because the latter
     # are overriden by Travis. Setting the compiler in Travis doesn't work
     # either because it strips version.
-    - env: COMPILER=clang-4.0
+    - os: linux
+      env: COMPILER=clang-4.0
       addons:
         apt:
           sources:
@@ -51,7 +53,8 @@ matrix:
             - clang-4.0
             - libstdc++-4.9-dev
 
-    - env: COMPILER=gcc-4.9
+    - os: linux
+      env: COMPILER=gcc-4.9
       addons:
         apt:
           sources:
@@ -60,7 +63,8 @@ matrix:
             - *common_deps
             - g++-4.9
 
-    - env: COMPILER=gcc-5
+    - os: linux
+      env: COMPILER=gcc-5
       addons:
         apt:
           sources:
@@ -68,8 +72,8 @@ matrix:
           packages:
             - *common_deps
             - g++-5
-
-    - env: COMPILER=gcc-6
+    - os: linux
+      env: COMPILER=gcc-6
       addons:
         apt:
           sources:
@@ -77,21 +81,25 @@ matrix:
           packages:
             - *common_deps
             - g++-6
+    - os: osx
+      osx_image: xcode8.3
+      env: COMPILER=clang-3.9
 
 env:
   global:
     - BUILD_TYPE=Debug ASAN=On CTEST_OUTPUT_ON_FAILURE=1
-    - secure: |-
-        DOPCvF/oFMkzTHcE1U7jJ1z3isJYKySiJfuzZQqY6IUmjvVxJuE2k4rvz1pURdqYIXs/3k
-        OHhtf59q0VJcCsdurpGXrF+E51JLQyG6SM1L3JzjVjEZ60a7laUyPer7rNnrj6g4K7CK0K
-        cSZKOAsrRxBGGllR5XnxYE9p6zEEPuDxbPJLS8ruDNI2LBCx0eMW/pzTvY4IA+pc2TlGBS
-        h85LH+p+aelp6Q5GKRFWxxy8ju3FcUI4LfJChEgn9Wb9dZ9VsBX1gZjUgXZ1gs0yp2Wcoh
-        kJuITsb1oRINA0DnwpADlAHpl/+t8NZZKwknTsEHW5KQtvnuqM4nnN4KszkMZQDhlOxgNp
-        vnvcS2lWlbeAE3f7lgtPZDWkmo8SaR+MRH0F1/+nnC7pdMvWoFRfkq5VsXDOiCMrXEJMZF
-        CokHdtxhfNRpwvqchD2BaYQ9xOAToi2GhbV4k/5Zc5bO+bxnTmlFR6fWtHtChCIXLrkKyG
-        LFlDvU4lS9eeaYzv4OaXL/HZ3HPn91/F96ZSVm8X17NmYwD1wfj+ad3D8YMXhWnnBQYpfF
-        eHz/lHAoLXWg/BhtgQbPmMYYKRrQaH7EKzBbqEHv6PhOk7vLMtdx5X7KmhVuFjpAMbaYoj
-        zwxxH0u+VAnVB5iazzyjhySjvzkvx6pGzZtTnjLJHxKcp9633z4OU=
+    - secure: "OqQzxQ9oOFHQgqEc+H71gA6sU2QHvXzzVVlTPC+dhWYZdxMdHzCBYf62gMOMdc4XNIfsu8mWDWb2sEOsuRZ4VygQCEbf/51keCijdRWtjkroE8Ah7KRmMT0a2Y0KplInkdwwAXSYUlkV0uQjCHpVXUEV4l4ReVjVMIR/S9R6KwRmrlE0m9b5GV2K2CPESZkkktiEIL5aEPEDNLfxB/GZeDarv9lJJDUiey1NG2M+bceNKuFj9mJCivCkXqZhuGI4Pl4sWYq/XqUeGAGSSRQw/KlwD1b2n4ifNmNYVJmTw9vRC9RwjaReAN1mcO/KASv5+BZQ3CLtNKt+OGoHME4nKhW7Jalzl1XOpmTPjuwxiGcci29SnMnfjADKqk4dvgae0e7MbOHP2s7YU9/5Yol7uid4OOg+svnMJ1OmPhqWO42/MA/X1chgTbpEFFpZQXb8sBcuHI5ZVPOPP+0XXpWHuddWBUNJaE82Lv0JfP6hsRix6aG3IioIQOaEaY9YVAIfv69P/VuDGzdY1z6opyWPcc0abB4rWH1gc757Frx812CB1c34tN2OkIBXx8vqwvw63Iy14U19NtXMEs9lvMg3Vw4oZeurqSmwc1Yk8alfZTrHRWpHUwVZJsnbzr8y3vGd11Sgmo4DpM2ecAwjSwjaqTZBxkAp64l97rkqWdhQKxs="
+    # - secure: |-
+    #     DOPCvF/oFMkzTHcE1U7jJ1z3isJYKySiJfuzZQqY6IUmjvVxJuE2k4rvz1pURdqYIXs/3k
+    #     OHhtf59q0VJcCsdurpGXrF+E51JLQyG6SM1L3JzjVjEZ60a7laUyPer7rNnrj6g4K7CK0K
+    #     cSZKOAsrRxBGGllR5XnxYE9p6zEEPuDxbPJLS8ruDNI2LBCx0eMW/pzTvY4IA+pc2TlGBS
+    #     h85LH+p+aelp6Q5GKRFWxxy8ju3FcUI4LfJChEgn9Wb9dZ9VsBX1gZjUgXZ1gs0yp2Wcoh
+    #     kJuITsb1oRINA0DnwpADlAHpl/+t8NZZKwknTsEHW5KQtvnuqM4nnN4KszkMZQDhlOxgNp
+    #     vnvcS2lWlbeAE3f7lgtPZDWkmo8SaR+MRH0F1/+nnC7pdMvWoFRfkq5VsXDOiCMrXEJMZF
+    #     CokHdtxhfNRpwvqchD2BaYQ9xOAToi2GhbV4k/5Zc5bO+bxnTmlFR6fWtHtChCIXLrkKyG
+    #     LFlDvU4lS9eeaYzv4OaXL/HZ3HPn91/F96ZSVm8X17NmYwD1wfj+ad3D8YMXhWnnBQYpfF
+    #     eHz/lHAoLXWg/BhtgQbPmMYYKRrQaH7EKzBbqEHv6PhOk7vLMtdx5X7KmhVuFjpAMbaYoj
+    #     zwxxH0u+VAnVB5iazzyjhySjvzkvx6pGzZtTnjLJHxKcp9633z4OU=
 
 cache:
   directories:
@@ -99,26 +107,34 @@ cache:
 
 before_script:
   # Install lcov to coveralls conversion + upload tool.
+  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew update ; fi
+  - if [[ "$TRAVIS_OS_NAME" == "osx" ]]; then brew install folly llvm@3.9 ; fi
   - gem install coveralls-lcov
-  - lcov --directory build --zerocounters
+  - lcov --version
 
 script:
-  - mkdir build &&
-    cd build &&
-    cmake -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DRSOCKET_CC=$COMPILER
+  - mkdir build
+  - cd build
+  - cmake -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DRSOCKET_CC=$COMPILER
           -DRSOCKET_ASAN=$ASAN -DRSOCKET_INSTALL_DEPS=True
-          -DRSOCKET_BUILD_WITH_COVERAGE=ON .. &&
-    make -j8 &&
-    make test
+          -DRSOCKET_BUILD_WITH_COVERAGE=ON ..
+  - make -j8
+  - lcov --directory . --zerocounters
+  - make test
   - cd ..
   - ./scripts/tck_test.sh -c cpp -s cpp
   - ./scripts/tck_test.sh -c java -s java
   - ./scripts/tck_test.sh -c java -s cpp
   - ./scripts/tck_test.sh -c cpp -s java
-  - cd build && make coverage
+  - cd build 
+  - make coverage
 
 after_success:
     # Upload to coveralls.
-  - if [ -f coverage.info ]; then
+  - echo $(pwd)
+  - if [ -f coverage.info ] && [ "$COMPILER" = "gcc-5" ]; then
+      echo "Uploading coverage info to coveralls";
       coveralls-lcov --repo-token=${COVERALLS_TOKEN} coverage.info;
+    else
+      echo "Not uploading coveralls for this matrix ($COMPILER / $TRAVIS_OS_NAME)";
     fi
