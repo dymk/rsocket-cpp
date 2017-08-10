@@ -6,8 +6,8 @@
 #include <iostream>
 
 #include "examples/util/ExampleSubscriber.h"
-#include "src/RSocket.h"
-#include "src/transports/tcp/TcpConnectionFactory.h"
+#include "rsocket/RSocket.h"
+#include "rsocket/transports/tcp/TcpConnectionFactory.h"
 #include "yarpl/Flowable.h"
 
 using namespace ::folly;
@@ -18,7 +18,9 @@ using namespace yarpl::flowable;
 DEFINE_string(host, "localhost", "host to connect to");
 DEFINE_int32(port, 9898, "host:port to connect to");
 
-class RSocketNetworkStatsLog : public RSocketNetworkStats {
+namespace {
+class ChannelConnectionEvents : public RSocketConnectionEvents {
+ public:
   void onConnected() override {
     LOG(INFO) << "onConnected";
   }
@@ -29,31 +31,54 @@ class RSocketNetworkStatsLog : public RSocketNetworkStats {
 
   void onClosed(const folly::exception_wrapper& ex) override {
     LOG(INFO) << "onClosed ex=" << ex.what();
+    closed_ = true;
   }
+
+  bool isClosed() const {
+    return closed_;
+  }
+
+ private:
+  std::atomic<bool> closed_{false};
 };
+}
+
+void sendRequest(std::string mimeType) {
+  folly::SocketAddress address;
+  address.setFromHostPort(FLAGS_host, FLAGS_port);
+  auto connectionEvents = std::make_shared<ChannelConnectionEvents>();
+  auto client = RSocket::createConnectedClient(
+                    std::make_unique<TcpConnectionFactory>(std::move(address)),
+                    SetupParameters(mimeType, mimeType),
+                    std::make_shared<RSocketResponder>(),
+                    nullptr,
+                    RSocketStats::noop(),
+                    connectionEvents)
+                    .get();
+
+  std::atomic<int> rcvdCount{0};
+
+  client->getRequester()
+      ->requestStream(Payload("Bob"))
+      ->take(5)
+      ->subscribe([&rcvdCount](Payload p) {
+        std::cout << "Received: " << p.moveDataToString() << std::endl;
+        rcvdCount++;
+      });
+
+  while (rcvdCount < 5 && !connectionEvents->isClosed()) {
+    std::this_thread::yield();
+  }
+}
 
 int main(int argc, char* argv[]) {
   FLAGS_logtostderr = true;
   FLAGS_minloglevel = 0;
   folly::init(&argc, &argv);
 
-  folly::SocketAddress address;
-  address.setFromHostPort(FLAGS_host, FLAGS_port);
+  sendRequest("application/json");
+  sendRequest("text/plain");
+  sendRequest("garbage");
 
-  auto rsf = RSocket::createClient(
-      std::make_unique<TcpConnectionFactory>(std::move(address)));
-  auto rs = rsf->connect(
-      SetupParameters("application/json", "application/json"),
-      nullptr,
-      nullptr,
-      nullptr,
-      std::make_shared<RSocketNetworkStatsLog>()).get();
-
-  rs->requestStream(Payload("Bob"))->take(5)->subscribe([](Payload p) {
-    std::cout << "Received: " << p.moveDataToString() << std::endl;
-  });
-
-  // Wait for a newline on the console to terminate the server.
-  std::getchar();
   return 0;
 }

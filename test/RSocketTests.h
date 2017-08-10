@@ -6,9 +6,9 @@
 
 #include <gtest/gtest.h>
 
-#include "src/RSocket.h"
-#include "src/transports/tcp/TcpConnectionAcceptor.h"
-#include "src/transports/tcp/TcpConnectionFactory.h"
+#include "rsocket/RSocket.h"
+#include "rsocket/transports/tcp/TcpConnectionAcceptor.h"
+#include "rsocket/transports/tcp/TcpConnectionFactory.h"
 #include "test/handlers/HelloStreamRequestHandler.h"
 
 namespace rsocket {
@@ -19,23 +19,53 @@ inline std::unique_ptr<RSocketServer> makeServer(
     std::shared_ptr<rsocket::RSocketResponder> responder) {
   TcpConnectionAcceptor::Options opts;
   opts.threads = 2;
-  opts.port = 0;
+  opts.address = folly::SocketAddress("::", 0);
 
   // RSocket server accepting on TCP.
   auto rs = RSocket::createServer(
       std::make_unique<TcpConnectionAcceptor>(std::move(opts)));
 
-  rs->start([responder](auto& setup) { setup.createRSocket(responder); });
+  rs->start([r = std::move(responder)](const SetupParameters&) { return r; });
 
   return rs;
 }
 
-inline std::unique_ptr<RSocketClient> makeClient(uint16_t port) {
+inline std::unique_ptr<RSocketServer> makeResumableServer(
+    std::shared_ptr<RSocketServiceHandler> serviceHandler) {
+  TcpConnectionAcceptor::Options opts;
+  opts.threads = 1;
+  opts.address = folly::SocketAddress("::", 0);
+  auto rs = RSocket::createServer(
+      std::make_unique<TcpConnectionAcceptor>(std::move(opts)));
+  rs->start(std::move(serviceHandler));
+  return rs;
+}
+
+inline std::shared_ptr<RSocketClient> makeClient(uint16_t port) {
   folly::SocketAddress address;
   address.setFromHostPort("localhost", port);
-  return RSocket::createClient(
-      std::make_unique<TcpConnectionFactory>(std::move(address)));
+  return RSocket::createConnectedClient(
+             std::make_unique<TcpConnectionFactory>(std::move(address)))
+      .get();
 }
+
+inline std::shared_ptr<RSocketClient> makeResumableClient(
+    uint16_t port,
+    std::shared_ptr<RSocketConnectionEvents> connectionEvents = nullptr) {
+  folly::SocketAddress address;
+  address.setFromHostPort("localhost", port);
+  SetupParameters setupParameters;
+  setupParameters.resumable = true;
+  return RSocket::createConnectedClient(
+             std::make_unique<TcpConnectionFactory>(std::move(address)),
+             std::move(setupParameters),
+             std::make_shared<RSocketResponder>(),
+             nullptr,
+             RSocketStats::noop(),
+             std::move(connectionEvents))
+      .get();
 }
-}
-} // namespace
+
+} // namespace client_server
+} // namespace tests
+} // namespace rsocket

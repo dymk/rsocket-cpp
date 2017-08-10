@@ -52,9 +52,18 @@ string(TOLOWER "${CMAKE_BUILD_TYPE}" BUILD_TYPE_LOWER)
 if (APPLE)
   set(OPENSSL_ROOT_DIR "/usr/local/opt/openssl")
   if ("${BUILD_TYPE_LOWER}" MATCHES "debug")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address,integer -fno-sanitize=unsigned-integer-overflow")
+    if (${CMAKE_CXX_COMPILER_ID} MATCHES Clang)
+      set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address,integer -fno-sanitize=unsigned-integer-overflow")
+    elseif (${CMAKE_CXX_COMPILER_ID} MATCHES GNU)
+      set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=address")
+    else ()
+        message(FATAL_ERROR "Unsupported compiler on macOS")
+    endif()
   endif()
 endif()
+
+# disable coverage mode by default
+option(RSOCKET_BUILD_WITH_COVERAGE "Build with --coverage (gcov)" OFF)
 
 # Add compiler-specific options.
 if (CMAKE_COMPILER_IS_GNUCXX)
@@ -63,19 +72,6 @@ if (CMAKE_COMPILER_IS_GNUCXX)
   endif ()
   set(EXTRA_LINK_FLAGS ${EXTRA_LINK_FLAGS} -fuse-ld=gold)
 
-  # Enable code coverage.
-  add_compile_options(--coverage)
-  set(EXTRA_LINK_FLAGS ${EXTRA_LINK_FLAGS} --coverage)
-  set(COVERAGE_INFO coverage.info)
-  add_custom_command(
-    OUTPUT ${COVERAGE_INFO}
-    # Capture coverage info.
-    COMMAND lcov --directory . --capture --output-file ${COVERAGE_INFO}
-    # Filter out system and test code.
-    COMMAND lcov --remove ${COVERAGE_INFO} 'tests/*' 'test/*' 'tck-test/*' '/usr/*' 'gmock/*' 'folly/*' --output-file
-                 ${COVERAGE_INFO}
-    # Debug before upload.
-    COMMAND lcov --list ${COVERAGE_INFO})
 elseif (${CMAKE_CXX_COMPILER_ID} MATCHES Clang)
   if (RSOCKET_ASAN)
     set(ASAN_FLAGS
@@ -84,24 +80,52 @@ elseif (${CMAKE_CXX_COMPILER_ID} MATCHES Clang)
   endif ()
 endif ()
 
+# Enable code coverage, if the compiler is supported
+if (RSOCKET_BUILD_WITH_COVERAGE)
+  set(COVERAGE_INFO coverage.info)
+
+  if (${CMAKE_SYSTEM_NAME} MATCHES Linux AND ${CMAKE_CXX_COMPILER_ID} MATCHES Clang)
+    # clang and linux's lcov don't play nice together; don't attempt with linux/clang
+    add_custom_command(
+      OUTPUT ${COVERAGE_INFO}
+      COMMAND echo "Coverage info omitted for clang/linux builds")
+
+  else ()
+    add_custom_command(
+      OUTPUT ${COVERAGE_INFO}
+      # Capture coverage info.
+      COMMAND lcov --directory . --capture --output-file ${COVERAGE_INFO}
+      # Filter out system and test code.
+      COMMAND lcov --remove ${COVERAGE_INFO} '*/tests/*' '*/test/*' '*/tck-test/*' '*/usr/include/*' '/usr/*' '*/gmock/*' '*/folly/*' --output-file
+                   ${COVERAGE_INFO}
+      # Debug before upload.
+      COMMAND lcov --list ${COVERAGE_INFO})
+  endif ()
+
+  if (CMAKE_COMPILER_IS_GNUCXX)
+    add_compile_options(--coverage -g)
+    set(EXTRA_LINK_FLAGS ${EXTRA_LINK_FLAGS} --coverage)
+
+  elseif (${CMAKE_CXX_COMPILER_ID} MATCHES Clang)
+    add_compile_options(-g -O0 -fprofile-arcs -ftest-coverage)
+    set(EXTRA_LINK_FLAGS ${EXTRA_LINK_FLAGS} -fprofile-arcs -ftest-coverage)
+
+  else ()
+    message(FATAL_ERROR "Code coverage not supported with this compiler/host combination")
+  endif ()
+
+  message(STATUS "Building with coverage")
+  add_custom_target(coverage DEPENDS ${COVERAGE_INFO})
+endif ()
+
 if (DEFINED ASAN_FLAGS)
   add_compile_options(${ASAN_FLAGS})
   set(EXTRA_LINK_FLAGS ${EXTRA_LINK_FLAGS} ${ASAN_FLAGS})
 endif ()
 
-add_custom_target(coverage DEPENDS ${COVERAGE_INFO})
-
-# default is to use ReactiveStreams location from github directly
-if(NOT REACTIVE_STREAMS_GIT_URL)
-  set(REACTIVE_STREAMS_GIT_URL "https://github.com/ReactiveSocket/reactive-streams-cpp.git" CACHE STRING "Location of the ReactiveStreams C++ git repo" FORCE)
-endif(NOT REACTIVE_STREAMS_GIT_URL)
-
 option(BUILD_BENCHMARKS "Build benchmarks" ON)
 
 enable_testing()
-
-# Add a OSS macro.  This is mainly to get gflags working with travis.
-add_definitions(-DOSS)
 
 include(ExternalProject)
 include(CTest)
@@ -111,7 +135,7 @@ if (NOT FOLLY_INSTALL_DIR)
 endif ()
 
 # Check if the correct version of folly is already installed.
-set(FOLLY_VERSION v2017.06.19.00)
+set(FOLLY_VERSION v2017.07.10.00)
 set(FOLLY_VERSION_FILE ${FOLLY_INSTALL_DIR}/${FOLLY_VERSION})
 if (RSOCKET_INSTALL_DEPS)
   if (NOT EXISTS ${FOLLY_VERSION_FILE})
@@ -137,7 +161,9 @@ if (INSTALL_FOLLY)
 
   set(FOLLY_INCLUDE_DIR ${FOLLY_INSTALL_DIR}/include)
   set(lib ${CMAKE_SHARED_LIBRARY_PREFIX}folly${CMAKE_SHARED_LIBRARY_SUFFIX})
+  set(benchlib ${CMAKE_SHARED_LIBRARY_PREFIX}follybenchmark${CMAKE_SHARED_LIBRARY_SUFFIX})
   set(FOLLY_LIBRARY ${FOLLY_INSTALL_DIR}/lib/${lib})
+  set(FOLLY_BENCHMARK_LIBRARY ${FOLLY_INSTALL_DIR}/lib/${benchlib})
 
   # CMake requires directories listed in INTERFACE_INCLUDE_DIRECTORIES to exist.
   file(MAKE_DIRECTORY ${FOLLY_INCLUDE_DIR})
@@ -158,11 +184,24 @@ if (TARGET folly-ext)
   add_dependencies(folly folly-ext)
 endif ()
 
+add_library(folly-benchmark SHARED IMPORTED)
+set_property(TARGET folly-benchmark PROPERTY IMPORTED_LOCATION ${FOLLY_BENCHMARK_LIBRARY})
+set_property(TARGET folly-benchmark
+  APPEND PROPERTY INTERFACE_LINK_LIBRARIES
+  ${EXTRA_LINK_FLAGS} ${EVENT_LIBRARY} ${CMAKE_THREAD_LIBS_INIT})
+if (TARGET folly-ext)
+  add_dependencies(folly-benchmark folly-ext)
+endif ()
+
 # Folly includes are marked as system to prevent errors on non-standard
 # extensions when compiling with -pedantic and -Werror.
 set_property(TARGET folly
   APPEND PROPERTY INTERFACE_SYSTEM_INCLUDE_DIRECTORIES ${FOLLY_INCLUDE_DIR})
 set_property(TARGET folly
+  APPEND PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${FOLLY_INCLUDE_DIR})
+set_property(TARGET folly-benchmark
+  APPEND PROPERTY INTERFACE_SYSTEM_INCLUDE_DIRECTORIES ${FOLLY_INCLUDE_DIR})
+set_property(TARGET folly-benchmark
   APPEND PROPERTY INTERFACE_INCLUDE_DIRECTORIES ${FOLLY_INCLUDE_DIR})
 
 # gmock
@@ -181,17 +220,6 @@ set(GMOCK_LIBS
   ${GMOCK_BINARY_DIR}/${CMAKE_CFG_INTDIR}/googlemock/${CMAKE_STATIC_LIBRARY_PREFIX}gmock${CMAKE_STATIC_LIBRARY_SUFFIX}
   ${GMOCK_BINARY_DIR}/${CMAKE_CFG_INTDIR}/googlemock/${CMAKE_STATIC_LIBRARY_PREFIX}gmock_main${CMAKE_STATIC_LIBRARY_SUFFIX}
   )
-
-# ReactiveStreams C++
-ExternalProject_Add(
-  ReactiveStreams
-  GIT_REPOSITORY ${REACTIVE_STREAMS_GIT_URL}
-  GIT_TAG d2fd61252b51a57a2916ee52fcd54b7f5d563591
-  CMAKE_ARGS "-DCMAKE_BUILD_TYPE=Debug" /
-    "-DCMAKE_INSTALL_PREFIX=${CMAKE_CURRENT_BINARY_DIR}/reactivestreams" /
-    "-DCMAKE_CXX_FLAGS=${CMAKE_CXX_FLAGS}" /
-    "-DCMAKE_EXE_LINKER_FLAGS=${CXX_LINKER_FLAGS}"
-)
 
 set(CMAKE_CXX_STANDARD 14)
 
@@ -242,104 +270,114 @@ add_subdirectory(yarpl)
 
 add_library(
   ReactiveSocket
-  src/RSocket.cpp
-  src/RSocket.h
-  src/RSocketServer.h
-  src/RSocketServer.cpp
-  src/RSocketClient.h
-  src/RSocketClient.cpp
-  src/RSocketRequester.h
-  src/RSocketRequester.cpp
-  src/RSocketErrors.h
-  src/RSocketParameters.cpp
-  src/RSocketParameters.h
-  src/ConnectionAcceptor.h
-  src/ConnectionFactory.h
-  src/transports/tcp/TcpConnectionAcceptor.h
-  src/transports/tcp/TcpConnectionAcceptor.cpp
-  src/transports/tcp/TcpConnectionFactory.h
-  src/transports/tcp/TcpConnectionFactory.cpp
-  src/RSocketResponder.cpp
-  src/RSocketResponder.h
-  src/statemachine/ChannelRequester.cpp
-  src/statemachine/ChannelRequester.h
-  src/statemachine/ChannelResponder.cpp
-  src/statemachine/ChannelResponder.h
-  src/statemachine/ConsumerBase.cpp
-  src/statemachine/ConsumerBase.h
-  src/statemachine/PublisherBase.cpp
-  src/statemachine/PublisherBase.h
-  src/statemachine/RequestResponseRequester.cpp
-  src/statemachine/RequestResponseRequester.h
-  src/statemachine/RequestResponseResponder.cpp
-  src/statemachine/RequestResponseResponder.h
-  src/statemachine/StreamStateMachineBase.cpp
-  src/statemachine/StreamStateMachineBase.h
-  src/statemachine/StreamRequester.cpp
-  src/statemachine/StreamRequester.h
-  src/statemachine/StreamResponder.cpp
-  src/statemachine/StreamResponder.h
-  src/statemachine/StreamsFactory.cpp
-  src/statemachine/StreamsFactory.h
-  src/statemachine/StreamsWriter.h
-  src/statemachine/StreamState.cpp
-  src/statemachine/StreamState.h
-  src/internal/ClientResumeStatusCallback.h
-  src/internal/Common.cpp
-  src/internal/Common.h
-  src/statemachine/RSocketStateMachine.cpp
-  src/statemachine/RSocketStateMachine.h
-  src/DuplexConnection.h
-  src/internal/FollyKeepaliveTimer.cpp
-  src/internal/FollyKeepaliveTimer.h
-  src/framing/Frame.cpp
-  src/framing/Frame.h
-  src/framing/FramedDuplexConnection.cpp
-  src/framing/FramedDuplexConnection.h
-  src/framing/FramedReader.cpp
-  src/framing/FramedReader.h
-  src/framing/FramedWriter.cpp
-  src/framing/FramedWriter.h
-  src/framing/FrameProcessor.h
-  src/framing/FrameSerializer.cpp
-  src/framing/FrameSerializer.h
-  src/framing/FrameTransport.cpp
-  src/framing/FrameTransport.h
-  src/Payload.cpp
-  src/Payload.h
-  src/internal/ResumeCache.cpp
-  src/internal/ResumeCache.h
-  src/internal/SetupResumeAcceptor.cpp
-  src/internal/SetupResumeAcceptor.h
-  src/RSocketStats.cpp
-  src/RSocketStats.h
-  src/transports/tcp/TcpDuplexConnection.cpp
-  src/transports/tcp/TcpDuplexConnection.h
-  src/framing/FrameSerializer_v0.cpp
-  src/framing/FrameSerializer_v0.h
-  src/framing/FrameSerializer_v0_1.cpp
-  src/framing/FrameSerializer_v0_1.h
-  src/framing/FrameSerializer_v1_0.cpp
-  src/framing/FrameSerializer_v1_0.h
-  src/internal/ScheduledSubscription.cpp
-  src/internal/ScheduledSubscription.h
-  src/internal/ScheduledSubscriber.h
-  src/internal/ScheduledRSocketResponder.cpp
-  src/internal/ScheduledRSocketResponder.h
-  src/internal/ScheduledSingleObserver.h
-  src/internal/ScheduledSingleSubscription.cpp
-  src/internal/ScheduledSingleSubscription.h
-  src/internal/RSocketConnectionManager.cpp
-  src/internal/RSocketConnectionManager.h
-  src/RSocketSetup.cpp
-  src/RSocketSetup.h)
+  rsocket/RSocket.cpp
+  rsocket/RSocket.h
+  rsocket/RSocketServer.h
+  rsocket/RSocketServer.cpp
+  rsocket/RSocketClient.h
+  rsocket/RSocketClient.cpp
+  rsocket/RSocketRequester.h
+  rsocket/RSocketRequester.cpp
+  rsocket/RSocketErrors.h
+  rsocket/RSocketParameters.cpp
+  rsocket/RSocketParameters.h
+  rsocket/ConnectionAcceptor.h
+  rsocket/ConnectionFactory.h
+  rsocket/transports/tcp/TcpConnectionAcceptor.h
+  rsocket/transports/tcp/TcpConnectionAcceptor.cpp
+  rsocket/transports/tcp/TcpConnectionFactory.h
+  rsocket/transports/tcp/TcpConnectionFactory.cpp
+  rsocket/RSocketResponder.cpp
+  rsocket/RSocketResponder.h
+  rsocket/statemachine/ChannelRequester.cpp
+  rsocket/statemachine/ChannelRequester.h
+  rsocket/statemachine/ChannelResponder.cpp
+  rsocket/statemachine/ChannelResponder.h
+  rsocket/statemachine/ConsumerBase.cpp
+  rsocket/statemachine/ConsumerBase.h
+  rsocket/statemachine/PublisherBase.cpp
+  rsocket/statemachine/PublisherBase.h
+  rsocket/statemachine/RequestResponseRequester.cpp
+  rsocket/statemachine/RequestResponseRequester.h
+  rsocket/statemachine/RequestResponseResponder.cpp
+  rsocket/statemachine/RequestResponseResponder.h
+  rsocket/statemachine/StreamStateMachineBase.cpp
+  rsocket/statemachine/StreamStateMachineBase.h
+  rsocket/statemachine/StreamRequester.cpp
+  rsocket/statemachine/StreamRequester.h
+  rsocket/statemachine/StreamResponder.cpp
+  rsocket/statemachine/StreamResponder.h
+  rsocket/statemachine/StreamsFactory.cpp
+  rsocket/statemachine/StreamsFactory.h
+  rsocket/statemachine/StreamsWriter.h
+  rsocket/statemachine/StreamState.cpp
+  rsocket/statemachine/StreamState.h
+  rsocket/internal/ClientResumeStatusCallback.h
+  rsocket/internal/Common.cpp
+  rsocket/internal/Common.h
+  rsocket/statemachine/RSocketStateMachine.cpp
+  rsocket/statemachine/RSocketStateMachine.h
+  rsocket/DuplexConnection.h
+  rsocket/internal/FollyKeepaliveTimer.cpp
+  rsocket/internal/FollyKeepaliveTimer.h
+  rsocket/framing/ErrorCode.cpp
+  rsocket/framing/ErrorCode.h
+  rsocket/framing/Frame.cpp
+  rsocket/framing/Frame.h
+  rsocket/framing/FrameFlags.cpp
+  rsocket/framing/FrameFlags.h
+  rsocket/framing/FrameProcessor.h
+  rsocket/framing/FrameSerializer.cpp
+  rsocket/framing/FrameSerializer.h
+  rsocket/framing/FrameTransport.cpp
+  rsocket/framing/FrameTransport.h
+  rsocket/framing/FrameType.cpp
+  rsocket/framing/FrameType.h
+  rsocket/framing/FramedDuplexConnection.cpp
+  rsocket/framing/FramedDuplexConnection.h
+  rsocket/framing/FramedReader.cpp
+  rsocket/framing/FramedReader.h
+  rsocket/framing/FramedWriter.cpp
+  rsocket/framing/FramedWriter.h
+  rsocket/Payload.cpp
+  rsocket/Payload.h
+  rsocket/internal/SetupResumeAcceptor.cpp
+  rsocket/internal/SetupResumeAcceptor.h
+  rsocket/RSocketStats.cpp
+  rsocket/RSocketStats.h
+  rsocket/transports/tcp/TcpDuplexConnection.cpp
+  rsocket/transports/tcp/TcpDuplexConnection.h
+  rsocket/framing/FrameSerializer_v0.cpp
+  rsocket/framing/FrameSerializer_v0.h
+  rsocket/framing/FrameSerializer_v0_1.cpp
+  rsocket/framing/FrameSerializer_v0_1.h
+  rsocket/framing/FrameSerializer_v1_0.cpp
+  rsocket/framing/FrameSerializer_v1_0.h
+  rsocket/internal/InMemResumeManager.h
+  rsocket/internal/InMemResumeManager.cpp
+  rsocket/internal/ScheduledSubscription.cpp
+  rsocket/internal/ScheduledSubscription.h
+  rsocket/internal/ScheduledSubscriber.h
+  rsocket/internal/ScheduledRSocketResponder.cpp
+  rsocket/internal/ScheduledRSocketResponder.h
+  rsocket/internal/ScheduledSingleObserver.h
+  rsocket/internal/ScheduledSingleSubscription.cpp
+  rsocket/internal/ScheduledSingleSubscription.h
+  rsocket/internal/RSocketConnectionManager.cpp
+  rsocket/internal/RSocketConnectionManager.h
+  rsocket/internal/SwappableEventBase.cpp
+  rsocket/internal/SwappableEventBase.h
+  rsocket/ResumeManager.h
+  rsocket/ColdResumeHandler.h
+  rsocket/RSocketServiceHandler.cpp
+  rsocket/RSocketServiceHandler.h
+  rsocket/RSocketServerState.h
+  rsocket/RSocketException.h)
 
 target_include_directories(ReactiveSocket PUBLIC "${PROJECT_SOURCE_DIR}/yarpl/include")
 target_include_directories(ReactiveSocket PUBLIC "${PROJECT_SOURCE_DIR}/yarpl/src")
 
 target_link_libraries(ReactiveSocket yarpl ${GFLAGS_LIBRARY} ${GLOG_LIBRARY})
-
-add_dependencies(ReactiveSocket ReactiveStreams)
 
 target_compile_options(
   ReactiveSocket
@@ -347,8 +385,13 @@ target_compile_options(
 
 enable_testing()
 
-# EXCLUDE_FROM_ALL so 'make install' doesn't attempt installation of googletest
-#add_subdirectory(external/googletest EXCLUDE_FROM_ALL)
+install(TARGETS ReactiveSocket DESTINATION lib)
+install(DIRECTORY rsocket DESTINATION include FILES_MATCHING PATTERN "*.h")
+
+# CMake doesn't seem to support "transitive" installing, and I can't access the
+# "yarpl" target from this file, so just grab the library file directly.
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/yarpl/libyarpl.a" DESTINATION lib)
+install(DIRECTORY yarpl/include/yarpl DESTINATION include FILES_MATCHING PATTERN "*.h")
 
 add_executable(
   tests
@@ -359,21 +402,27 @@ add_executable(
   test/RequestChannelTest.cpp
   test/RequestResponseTest.cpp
   test/RequestStreamTest.cpp
+  test/WarmResumptionTest.cpp
+  test/ConnectionEventsTest.cpp
   test/Test.cpp
   test/framing/FrameTest.cpp
   test/framing/FrameTransportTest.cpp
   test/handlers/HelloStreamRequestHandler.cpp
   test/handlers/HelloStreamRequestHandler.h
+  test/handlers/HelloServiceHandler.cpp
+  test/handlers/HelloServiceHandler.h
   test/internal/AllowanceSemaphoreTest.cpp
   test/internal/FollyKeepaliveTimerTest.cpp
+  test/internal/SwappableEventBaseTest.cpp
+  test/internal/SetupResumeAcceptorTest.cpp
   test/test_utils/MockDuplexConnection.h
   test/test_utils/MockKeepaliveTimer.h
   test/test_utils/MockRequestHandler.h
   test/test_utils/MockStats.h
   test/test_utils/Mocks.h
-  test/transport/TcpDuplexConnectionTest.cpp
+  test/transport/DuplexConnectionTest.cpp
   test/transport/DuplexConnectionTest.h
-  test/transport/DuplexConnectionTest.cpp)
+  test/transport/TcpDuplexConnectionTest.cpp)
 
 target_link_libraries(
   tests
@@ -437,10 +486,10 @@ target_link_libraries(
   ${DOUBLE-CONVERSION})
 
 # Download the latest TCK drivers JAR.
-set(TCK_DRIVERS_JAR reactivesocket-tck-drivers-0.9-SNAPSHOT.jar)
+set(TCK_DRIVERS_JAR rsocket-tck-drivers-0.9-SNAPSHOT.jar)
 join(TCK_DRIVERS_URL
-  "https://oss.jfrog.org/libs-snapshot/io/reactivesocket/"
-  "reactivesocket-tck-drivers/0.9-SNAPSHOT/${TCK_DRIVERS_JAR}")
+  "https://oss.jfrog.org/libs-snapshot/io/rsocket/"
+  "rsocket-tck-drivers/0.9-SNAPSHOT/${TCK_DRIVERS_JAR}")
 message(STATUS "Downloading ${TCK_DRIVERS_URL}")
 file(DOWNLOAD ${TCK_DRIVERS_URL} ${CMAKE_SOURCE_DIR}/${TCK_DRIVERS_JAR})
 
@@ -634,6 +683,47 @@ target_link_libraries(
   ${GFLAGS_LIBRARY}
   ${GLOG_LIBRARY})
 
+# warm-resumption
+
+add_executable(
+  example_resumption-server
+  examples/resumption/Resumption_Server.cpp
+)
+
+target_link_libraries(
+  example_resumption-server
+  ReactiveSocket
+  reactivesocket_examples_util
+  yarpl
+  ${GFLAGS_LIBRARY}
+  ${GLOG_LIBRARY})
+
+add_executable(
+  example_warm-resumption-client
+  examples/resumption/WarmResumption_Client.cpp
+)
+
+target_link_libraries(
+  example_warm-resumption-client
+  ReactiveSocket
+  reactivesocket_examples_util
+  yarpl
+  ${GFLAGS_LIBRARY}
+  ${GLOG_LIBRARY})
+
+add_executable(
+  example_cold-resumption-client
+  examples/resumption/ColdResumption_Client.cpp
+)
+
+target_link_libraries(
+  example_cold-resumption-client
+  ReactiveSocket
+  reactivesocket_examples_util
+  yarpl
+  ${GFLAGS_LIBRARY}
+  ${GLOG_LIBRARY})
+
 
 ########################################
 # End Examples
@@ -672,7 +762,6 @@ if(BUILD_BENCHMARKS)
           ${GLOG_LIBRARY})
       add_dependencies(
           ${name}
-          ReactiveStreams
           google_benchmark)
   endfunction()
 

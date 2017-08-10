@@ -7,10 +7,9 @@
 #include <folly/init/Init.h>
 #include <folly/portability/GFlags.h>
 
-#include "src/RSocket.h"
-#include "src/transports/tcp/TcpConnectionAcceptor.h"
+#include "rsocket/RSocket.h"
+#include "rsocket/transports/tcp/TcpConnectionAcceptor.h"
 #include "yarpl/Observable.h"
-#include "yarpl/schedulers/ThreadScheduler.h"
 
 using namespace rsocket;
 using namespace yarpl;
@@ -75,20 +74,19 @@ int main(int argc, char* argv[]) {
   folly::init(&argc, &argv);
 
   TcpConnectionAcceptor::Options opts;
-  opts.port = FLAGS_port;
+  opts.address = folly::SocketAddress("::", FLAGS_port);
   opts.threads = 2;
 
   // RSocket server accepting on TCP
   auto rs = RSocket::createServer(
       std::make_unique<TcpConnectionAcceptor>(std::move(opts)));
 
-  // global request responder
-  auto responder = std::make_shared<PushStreamRequestResponder>();
-
   auto rawRs = rs.get();
   auto serverThread = std::thread([=] {
     // start accepting connections
-    rawRs->startAndPark([responder](auto& setup) { setup.createRSocket(responder); });
+    rawRs->startAndPark([](const SetupParameters&) {
+      return std::make_shared<PushStreamRequestResponder>();
+    });
   });
 
   // Wait for a newline on the console to terminate the server.

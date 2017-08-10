@@ -7,8 +7,8 @@
 #include <sstream>
 #include <vector>
 
-#include "Flowable.h"
-#include "Subscriber.h"
+#include "yarpl/flowable/Flowable.h"
+#include "yarpl/flowable/Subscriber.h"
 #include "yarpl/utils/ExceptionString.h"
 #include "yarpl/utils/credits.h"
 
@@ -203,6 +203,10 @@ class TestSubscriber : public Subscriber<T> {
    */
   void cancel() {
     subscription_->cancel();
+  }
+
+  void request(int64_t n) {
+    subscription_->request(n);
   }
 
  private:

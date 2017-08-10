@@ -4,8 +4,10 @@
 
 #include <map>
 
-#include "src/Payload.h"
-#include "src/RSocketRequester.h"
+#include <folly/SocketAddress.h>
+#include "rsocket/Payload.h"
+#include "rsocket/RSocket.h"
+#include "rsocket/RSocketRequester.h"
 
 #include "tck-test/BaseSubscriber.h"
 #include "tck-test/TestSuite.h"
@@ -25,12 +27,23 @@ class RequestCommand;
 class AwaitCommand;
 class CancelCommand;
 class AssertCommand;
+class ResumeCommand;
+class DisconnectCommand;
 
 class TestInterpreter {
+  class TestClient {
+   public:
+    explicit TestClient(std::shared_ptr<RSocketClient> c)
+        : client(std::move(c)) {
+      auto rs = client->getRequester();
+      requester = std::move(rs);
+    }
+    std::shared_ptr<RSocketClient> client;
+    std::shared_ptr<RSocketRequester> requester;
+  };
+
  public:
-  TestInterpreter(
-      const Test& test,
-      RSocketRequester* requester);
+  TestInterpreter(const Test& test, folly::SocketAddress address);
 
   bool run();
 
@@ -40,14 +53,17 @@ class TestInterpreter {
   void handleAwait(const AwaitCommand& command);
   void handleCancel(const CancelCommand& command);
   void handleAssert(const AssertCommand& command);
+  void handleDisconnect(const DisconnectCommand& command);
+  void handleResume(const ResumeCommand& command);
 
   yarpl::Reference<BaseSubscriber> getSubscriber(const std::string& id);
 
-  RSocketRequester* requester_;
+  folly::SocketAddress address_;
   const Test& test_;
   std::map<std::string, std::string> interactionIdToType_;
   std::map<std::string, yarpl::Reference<BaseSubscriber>> testSubscribers_;
+  std::map<std::string, std::shared_ptr<TestClient>> testClient_;
 };
 
-} // tck
-} // reactivesocket
+} // namespace tck
+} // namespace rsocket

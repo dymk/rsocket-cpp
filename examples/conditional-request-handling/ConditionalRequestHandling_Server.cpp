@@ -6,9 +6,8 @@
 
 #include "JsonRequestHandler.h"
 #include "TextRequestHandler.h"
-#include "src/RSocket.h"
-#include "src/RSocketErrors.h"
-#include "src/transports/tcp/TcpConnectionAcceptor.h"
+#include "rsocket/RSocket.h"
+#include "rsocket/transports/tcp/TcpConnectionAcceptor.h"
 
 using namespace ::folly;
 using namespace ::rsocket;
@@ -21,27 +20,22 @@ int main(int argc, char* argv[]) {
   folly::init(&argc, &argv);
 
   TcpConnectionAcceptor::Options opts;
-  opts.port = FLAGS_port;
+  opts.address = folly::SocketAddress("::", FLAGS_port);
 
   // RSocket server accepting on TCP
   auto rs = RSocket::createServer(
       std::make_unique<TcpConnectionAcceptor>(std::move(opts)));
-  // global request responders
-  auto textResponder = std::make_shared<TextRequestResponder>();
-  auto jsonResponder = std::make_shared<JsonRequestResponder>();
-  // start accepting connections
+
   rs->startAndPark(
-      [textResponder, jsonResponder](auto& setup) {
-            if (setup.params().dataMimeType == "text/plain") {
-              LOG(INFO) << "Connection Request => text/plain MimeType";
-              setup.createRSocket(textResponder);
-            } else if (setup.params().dataMimeType == "application/json") {
-              LOG(INFO) << "Connection Request => application/json MimeType";
-              setup.createRSocket(jsonResponder);
-            } else {
-              LOG(INFO) << "Connection Request => Unsupported MimeType"
-                        << setup.params().dataMimeType;
-              setup.error(UnsupportedSetupError("Unknown MimeType"));
-            }
-          });
+      [](const rsocket::SetupParameters& params)
+          -> std::shared_ptr<RSocketResponder> {
+        LOG(INFO) << "Connection Request; MimeType : " << params.dataMimeType;
+        if (params.dataMimeType == "text/plain") {
+          return std::make_shared<TextRequestResponder>();
+        } else if (params.dataMimeType == "application/json") {
+          return std::make_shared<JsonRequestResponder>();
+        } else {
+          throw RSocketException("Unknown MimeType");
+        }
+      });
 }

@@ -6,8 +6,8 @@
 #include <folly/init/Init.h>
 #include <folly/portability/GFlags.h>
 
-#include "src/RSocket.h"
-#include "src/transports/tcp/TcpConnectionAcceptor.h"
+#include "rsocket/RSocket.h"
+#include "rsocket/transports/tcp/TcpConnectionAcceptor.h"
 #include "yarpl/Single.h"
 
 using namespace rsocket;
@@ -16,7 +16,8 @@ using namespace yarpl::single;
 
 DEFINE_int32(port, 9898, "port to connect to");
 
-class HelloRequestResponseRequestResponder : public rsocket::RSocketResponder {
+namespace {
+class HelloRequestResponseResponder : public rsocket::RSocketResponder {
  public:
   Reference<Single<Payload>> handleRequestResponse(Payload request, StreamId)
       override {
@@ -37,6 +38,7 @@ class HelloRequestResponseRequestResponder : public rsocket::RSocketResponder {
     });
   }
 };
+}
 
 int main(int argc, char* argv[]) {
   FLAGS_logtostderr = true;
@@ -44,20 +46,19 @@ int main(int argc, char* argv[]) {
   folly::init(&argc, &argv);
 
   TcpConnectionAcceptor::Options opts;
-  opts.port = FLAGS_port;
+  opts.address = folly::SocketAddress("::", FLAGS_port);
   opts.threads = 2;
 
   // RSocket server accepting on TCP
   auto rs = RSocket::createServer(
       std::make_unique<TcpConnectionAcceptor>(std::move(opts)));
 
-  // global request responder
-  auto responder = std::make_shared<HelloRequestResponseRequestResponder>();
-
   auto rawRs = rs.get();
   auto serverThread = std::thread([=] {
     // start accepting connections
-    rawRs->startAndPark([responder](auto& setup) { setup.createRSocket(responder); });
+    rawRs->startAndPark([](const rsocket::SetupParameters&) {
+      return std::make_shared<HelloRequestResponseResponder>();
+    });
   });
 
   // Wait for a newline on the console to terminate the server.

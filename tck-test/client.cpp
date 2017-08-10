@@ -6,12 +6,12 @@
 #include <folly/init/Init.h>
 #include <folly/portability/GFlags.h>
 
-#include "src/RSocket.h"
+#include "rsocket/RSocket.h"
 
 #include "tck-test/TestFileParser.h"
 #include "tck-test/TestInterpreter.h"
 
-#include "src/transports/tcp/TcpConnectionFactory.h"
+#include "rsocket/transports/tcp/TcpConnectionFactory.h"
 
 DEFINE_string(ip, "127.0.0.1", "IP to connect to");
 DEFINE_int32(port, 9898, "port to connect to");
@@ -40,13 +40,6 @@ int main(int argc, char* argv[]) {
 
   LOG(INFO) << "Creating client to connect to " << address.describe();
 
-  // create a client which can then make connections below
-  auto rsf = RSocket::createClient(
-      std::make_unique<TcpConnectionFactory>(std::move(address)));
-
-  // connect and wait for connection
-  auto rs = rsf->connect().get();
-
   TestFileParser testFileParser(FLAGS_test_file);
   TestSuite testSuite = testFileParser.parse();
   LOG(INFO) << "Test file parsed. Executing " << testSuite.tests().size()
@@ -59,9 +52,9 @@ int main(int argc, char* argv[]) {
     if (FLAGS_tests == "all" ||
         std::find(testsToRun.begin(), testsToRun.end(), test.name()) !=
             testsToRun.end()) {
-      ++ran;
-      TestInterpreter interpreter(test, rs.get());
+      TestInterpreter interpreter(test, std::move(address));
       bool passing = interpreter.run();
+      ++ran;
       if (passing) {
         ++passed;
       }

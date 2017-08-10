@@ -2,7 +2,6 @@
 
 #pragma once
 
-#include <cassert>
 #include <memory>
 #include <mutex>
 #include <stdexcept>
@@ -10,10 +9,12 @@
 #include <type_traits>
 #include <utility>
 
-#include "../Refcounted.h"
-#include "Subscriber.h"
-#include "Subscribers.h"
+#include <glog/logging.h>
+
+#include "yarpl/Refcounted.h"
 #include "yarpl/Scheduler.h"
+#include "yarpl/flowable/Subscriber.h"
+#include "yarpl/flowable/Subscribers.h"
 #include "yarpl/utils/credits.h"
 #include "yarpl/utils/type_traits.h"
 
@@ -192,8 +193,7 @@ class Flowable : public virtual Refcounted {
 
     // Subscriber methods.
     void onSubscribe(Reference<Subscription>) override {
-      // Not actually expected to be called.
-      assert(false && "do not call this method!");
+      LOG(FATAL) << "Do not call this method";
     }
 
     void onNext(T value) override {
@@ -204,8 +204,8 @@ class Flowable : public virtual Refcounted {
       // we will set the flag first to save a potential call to lock.try_lock()
       // in the process method via cancel or request methods
       auto old = requested_.exchange(kCanceled, std::memory_order_relaxed);
-      assert(old != kCanceled && "calling onComplete or onError twice or on "
-          "canceled subscription");
+      DCHECK_NE(old, kCanceled) << "Calling onComplete or onError twice or on "
+                                << "canceled subscription";
 
       subscriber_->onComplete();
       // We should already be in process(); nothing more to do.
@@ -218,8 +218,8 @@ class Flowable : public virtual Refcounted {
       // we will set the flag first to save a potential call to lock.try_lock()
       // in the process method via cancel or request methods
       auto old = requested_.exchange(kCanceled, std::memory_order_relaxed);
-      assert(old != kCanceled && "calling onComplete or onError twice or on "
-          "canceled subscription");
+      DCHECK_NE(old, kCanceled) << "Calling onComplete or onError twice or on "
+                                << "canceled subscription";
 
       subscriber_->onError(error);
       // We should already be in process(); nothing more to do.
@@ -307,7 +307,7 @@ class Flowable : public virtual Refcounted {
 } // flowable
 } // yarpl
 
-#include "FlowableOperator.h"
+#include "yarpl/flowable/FlowableOperator.h"
 
 namespace yarpl {
 namespace flowable {
