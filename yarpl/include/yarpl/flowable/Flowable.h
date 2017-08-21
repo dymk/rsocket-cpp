@@ -127,6 +127,9 @@ class Flowable : public virtual Refcounted {
           std::tuple<int64_t, bool>>::value>::type>
   static auto create(Emitter emitter);
 
+  template<typename iterator>
+  static auto createFromIterator(iterator begin, iterator end);
+
  private:
   virtual std::tuple<int64_t, bool> emit(Subscriber<T>&, int64_t) {
     return std::make_tuple(static_cast<int64_t>(0), false);
@@ -316,6 +319,13 @@ class Flowable : public virtual Refcounted {
 
 namespace yarpl {
 namespace flowable {
+
+template<typename T>
+template<typename iterator>
+Reference<Flowable<T>>
+Flowable<T>::createFromIterator(iterator begin, iterator end) {
+  return Reference::make_ref<FromIteratorOperator>(begin, end);
+}
 
 template <typename T>
 template <typename Emitter>

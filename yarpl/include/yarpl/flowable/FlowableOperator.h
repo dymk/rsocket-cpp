@@ -5,7 +5,6 @@
 #include <cassert>
 #include <utility>
 
-#include "yarpl/flowable/Flowable.h"
 #include "yarpl/flowable/Subscriber.h"
 #include "yarpl/flowable/Subscription.h"
 #include "yarpl/utils/credits.h"
@@ -508,6 +507,32 @@ class FromPublisherOperator : public Flowable<T> {
  private:
   OnSubscribe function_;
 };
+
+template <typename T, typename iterator>
+class FromIteratorOperator : public Flowable<T> {
+  typename ThisOperatorT = FromIteratorOperator<T, iterator>;
+
+public:
+  explicit FromIteratorOperator(iterator&& begin, iterator&& end)
+    : begin_(std::move(begin)), end_(std::move(end)),
+    subscription_(
+      Reference::make_ref<Subscription>(Reference<ThisOperatorT>(this))
+    )
+    {}
+
+private:
+  class Subscription : yarpl::Flowable::Subscription {
+    explicit Subscription(Reference<ThisOperatorT> oper) : operator_(oper) {}
+    void request(int64_t n) {}
+    void cancel();
+
+    Reference<ThisOperatorT> operator_;
+  }
+
+  iterator begin_;
+  iterator end_;
+  Reference<Subscription> subscrition_;
+}
 
 } // namespace flowable
 } // namespace yarpl
