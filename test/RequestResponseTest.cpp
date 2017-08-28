@@ -135,6 +135,28 @@ TEST(RequestResponseTest, FailureInResponse) {
   to->assertOnErrorMessage("whew!");
 }
 
+TEST(RequestResponseTest, CanSubscribeToClosedClient) {
+  folly::ScopedEventBaseThread worker;
+  auto client = makeClient(worker.getEventBase(), 0);
+  client->disconnect();
+  auto requester = client->getRequester();
+  bool did_call_on_error = false;
+  folly::Baton<> wait_for_on_error;
+  requester->requestResponse(Payload("foo", "bar"))
+    ->subscribe([](auto) {
+      ASSERT(false) << "should not call onNext";
+    },
+    [&](folly::exception_wrapper) {
+      did_call_on_error = true;
+      wait_for_on_error.post();
+    },
+    []() {
+      ASSERT(false) <<" should not call onComplete";
+    });
+
+
+}
+
 // TODO: Currently, this hangs when the client sends a request,
 // we should fix this
 TEST(DISABLED_RequestResponseTest, FailureOnRequest) {
